@@ -1,0 +1,886 @@
+---
+title: "Assignment 9"
+author: "Hasmik Grigoryan, Hanyu Xiao, Rose Porta, Sandani Kumanayake"
+date: "2023-10-05"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, include=FALSE}
+rm(list=ls())
+library("Amelia")
+library("ellipse")
+library("plyr")
+library("corrgram")
+library("Hmisc")
+library("caret")
+library("caret")
+library("caret")
+library("pscl")
+library("glmnet")
+library("car")
+library("rms")
+library("DAAG")
+library("pROC")
+
+set.seed(134562)
+
+flight.data.types <- c('factor', # Month
+                      'factor', # Day of Week
+                      'factor', # Carrier
+                      'factor', # origin airport
+                      'factor', # origin state
+                      'factor', # destination airport
+                      'factor', # destination state
+                      'numeric', # Departure Time
+                      'numeric', # on time or not
+                      'numeric', # elapsed time (duration)
+                      'numeric' # distance
+)
+missing.values <- c("NA","")
+
+flight.data <- read.csv("TampaFlights2022.csv",
+colClasses=flight.data.types,na.strings=missing.values)
+
+flight.data.new <- flight.data
+
+rand.shuffle <- sample(nrow(flight.data.new))
+flight.data.new2.new <- flight.data.new[rand.shuffle,]
+flight.data.fin <- flight.data.new2.new
+
+train.percent <- 0.8
+training.rows <- createDataPartition(flight.data.fin$delay,
+p = train.percent, list = FALSE)
+train.batch <- flight.data.fin[training.rows, ]
+test.batch <- flight.data.fin[-training.rows, ]
+
+# model
+model <- model.matrix(delay ~ (day + depart + duration + month)^2 + carrier 
+                      + poly(depart, degree=3,raw=TRUE)[,2:3]+ poly(duration,degree=3,raw=TRUE)[,2:3],data=train.batch)[,-1]
+
+
+glmmod <- glmnet(model,y=as.factor(train.batch$delay),alpha=1,family='binomial')
+
+cv.glmmod <- cv.glmnet(model,y=train.batch$delay,alpha=1)
+plot(cv.glmmod)
+
+best_lambda <- cv.glmmod$lambda.min
+
+model.results <- coef(glmmod,s=best_lambda)
+
+model.results
+
+model.testdata <- model.matrix(delay ~ (day + depart + duration + month)^2 + carrier + poly(depart, degree=3,raw=TRUE)[,2:3]+ poly(duration,degree=3,raw=TRUE)[,2:3],data=test.batch)[,-1]
+
+
+glm.predict.lasso <- as.vector(predict(glmmod, s=best_lambda,model.testdata,type="response"))
+
+glm.predict.lasso.outcome <- factor(as.numeric(glm.predict.lasso > 0.5))
+
+confusion.outcome.lasso <- confusionMatrix(glm.predict.lasso.outcome,factor(test.batch$delay))
+
+print(confusion.outcome.lasso)
+
+model_columns <- colnames(model)
+
+model.testdata
+
+save(glmmod, file="lasso_model.Rdata")
+save(model_columns, file="model_columns.Rdata")
+
+rm(list=ls())
+
+# set random seed
+set.seed(134562)
+
+# main function
+# inputs: month, day, carrier, depart, duration
+# output: probability of delay
+predict.delay <- function(month, day, carrier, depart, duration){
+  
+  # best lambda returned by the trained model
+  best_lambda<-1.341975e-05
+  
+  # load the model columns and the model saved previously
+  load("lasso_model.RData") 
+  load("model_columns.RData") 
+  
+  # make a dataframe with the columns from model_columns  
+  df <- data.frame(matrix(ncol = 80, nrow = 0))
+  colnames(df) <- model_columns
+  
+  # make the main effect variables
+  day2 <- 1*(day==2)
+  day3 <- 1*(day==3)
+  day4 <- 1*(day==4)
+  day5 <- 1*(day==5)
+  day6 <- 1*(day==6)
+  day7 <- 1*(day==7)
+  month5 <- 1*(month==5)
+  month6 <- 1*(month==6)
+  month7 <- 1*(month==7)
+  month8 <- 1*(month==8)
+  month9 <- 1*(month==9)
+  carrierAS <- 1*(carrier=="AS")
+  carrierB6 <- 1*(carrier=="B6")
+  carrierDL <- 1*(carrier=="DL")
+  carrierF9 <- 1*(carrier=="F9")
+  carrierMQ <- 1*(carrier=="MQ")
+  carrierNK <- 1*(carrier=="NK")
+  carrierUA <- 1*(carrier=="UA")
+  carrierWN <- 1*(carrier=="WN")
+  carrierYV <- 1*(carrier=="YV")
+  carrierYX <- 1*(carrier=="YX")
+  polydepart2 <- depart^2
+  polydepart3 <- depart^3
+  polyduration2 <- duration^2
+  polyduration3 <- duration^3
+  
+  
+  # make the full interaction and polynomial row 
+  df[1,]<-c(day2, day3, day4, day5, day6, day7, depart, duration, month5, month6, month7, month8,
+            month9, carrierAS, carrierB6, carrierDL, carrierF9, carrierMQ, carrierNK, carrierUA,
+            carrierWN, carrierYV, carrierYX, polydepart2, polydepart3, polyduration2, polyduration3,
+            day2*depart, day3*depart, day4*depart, day5*depart, day6*depart, day7*depart, 
+            day2*duration, day3*duration, day4*duration, day5*duration, day6*duration, day7*duration, 
+            day2*month5, day3*month5, day4*month5, day5*month5, day6*month5, day7*month5, 
+            day2*month6, day3*month6, day4*month6, day5*month6, day6*month6, day7*month6,
+            day2*month7, day3*month7, day4*month7, day5*month7, day6*month7, day7*month7, 
+            day2*month8, day3*month8, day4*month8, day5*month8, day6*month8, day7*month8,
+            day2*month9, day3*month9, day4*month9, day5*month9, day6*month9, day7*month9,
+            depart*duration, depart*month5, depart*month6, depart*month7, depart*month8, depart*month9,
+            duration*month5, duration*month6, duration*month7, duration*month8, duration*month9) 
+  
+  # predict the probability
+  prob <- as.vector(predict(glmmod, s=best_lambda, as.matrix(df[1,]),type="response"))
+  
+  # return the probability
+  return(prob)
+}
+
+#Example call
+# input: month, day, caarrier, depart, duration
+predict.delay(7, 4, "AA", 722, 98)
+```
+
+# R Function
+
+## Introduction
+
+We have made an R function that takes as input data about a specific flight leaving from TPA, Florida and returns as an output the probability of the flight being delayed. We believe this function (and package) will serve as a prototype for a package of high value to anyone buying flights or planning itineraries involving flights. Below we describe our approach to making this function and show some implementations of it. 
+
+## Data used for the function
+
+The function needs to have access to the trained model. Since this function is later going to be turned into a package we needed to have the model saved as an Rdata file. The code in appendix A.1 shows how we trained and saved the data. The code outputs two files: lasso_model.Rdata - the trained lasso model, model_columns.Rdata - a list of comprehensive interactions and polynomials used in the lasso model. We could read the list of coefficients from the lasso model directly. However, a decision was made to include the interactions for the full model, because this would make it easier to in the future change the model slightly if needed. This way, only the model file needs to be modified but no other code. 
+
+## The function
+
+The function can be found in Appendix A.2
+
+The main function - called predict.delay() takes the following inputs:
++ month - the month of the flight
++ day - the day of the flight 
++ carrier - the carrier
++ depart - departure time
++ duration - duration of the flight
+
+The function outputs one number - the probability of the flight getting delayed.
+
+The code is heavily commented as part of documentation. 
+
+## Testing
+
+We tested the function by comparing some of its outputs against the outputs of the validation dataset used as part of evaluating the model. 
+
+## Calling the function
+
+Below are some examples of calling the function. 
+
+The probability of delay for a flight with the following parameters 
++ departs in July
++ on a Thursday
++ using American Airlines
++ departs at noon
++ lasts 98 minutes. 
+
+Probability of delay:
+```{r}
+predict.delay(7, 4, "AA", 722, 98)
+```
+
+The probability of delay for a flight with the following parameters 
++ departs in September
++ on a Wednesday
++ using Spirit Airlines
++ departs at 12.01 a.m.
++ lasts 200 minutes. 
+
+Probability of delay:
+```{r}
+predict.delay(9, 3, "NK", 1, 200)
+```
+
+# R Package: TPAdelays
+
+Based on our R function presented, we created an R package called `TPAdelays` which serves as a user-friendly interface for predicting the probability of a flight delay based on month, day, carrier, departure time, and duration. 
+
+A few modifications have been made to the function in the process of creating the R package which are described below. The full code of the revised function will be included in the appendix at the end of this report, and the full package will be submitted separately with this assignment.
+
+Firstly, the name has been changed to `predict_delay` instead of `predict.delay`. The main reason for this is that the period (.) is used for other purposes like file extensions which can cause confusion when it is in the name of a function, while the underscore (_) is less frequently used for other purposes. 
+
+Secondly, the format of the user inputs has been changed slightly to facilitate the experience for the user. Previously, the argument for day of week was expected to be an integer 1-7. In order to make this more intuitive, the input is now expected to be a character string specifying the day of week directly, e.g. "Thursday". The other change to the argument format is in the departure time input. Previously, the expected input was a single integer representing departure time in minutes after 12am. This would be some work for the user to compute, so this argument has now been split into two separate arguments: departure hour (in 24 hour time) and departure minute. The first of these arguments expects an integer between 0-23 representing the hour of the departure time, and the second expects an integer between 0-59 representing the minute of the hour for the departure time. Some additional code has been added into the function to convert these more user-friendly inputs into the input formats needed for the prediction model.
+
+Thirdly, several error and warning messages have been added to assist users who do not read the documentation and enter the arguments in an incorrect format or enter a value outside of the expected possibilities. Notably, a warning message has been added which warns users who ener a month outside of April-September that the model was only trained on data for flights in April-September, so the prediction may be less accurate for months outside of this range.
+
+Beyond the function, we have added one other element to the package, which is the full dataset that we used to train the model (the one posted to Moodle at the beginning of the semester). The inclusion of this dataset provides transparency by allowing users to access the original data used to create the prediction model, and it also allows users to explore the data on their own in different ways in order to gain deeper insight into flight delay patterns beyond the predictions that the function provides. The user can access this data set using the command `TPAdelays::tpa_data_2022`. 
+
+The aforementioned dataset is the only dataset available to the user from the package, but we also use two internal datasets, `glmmod` and `model_columns` to facilitate fitting the model. These two datasets were previously discussed in assignment 9 as well.
+
+# Shiny App: TPA Flight Delay Prediction
+
+Incorporating the functionality of the 'TPAdelays' R package, we have developed a user friendly Shiny app named "TPA Flight Delay Prediction." This Shiny app allows users to interactively predict the probability of flight delays departing from Tampa International Airport (TPA) based on various input parameters, including the month of the flight, day of the week, airline carrier, departure time, and flight duration. The primary goal of this app is to empower users to make informed decisions about their travel plans and to gain insights into the likelihood of flight delays.
+
+The "TPA Flight Delay Prediction" Shiny app consists of two main tabs, which are Probability and Interpretation and Delay by Airlines. In Probability and Interpretation tab users can select the month of the flight, day of the week, airline carrier, departure time (hour and minute), and flight duration (hour and minute). The app leverages the predict_delay function from the TPAdelays package to calculate and display the probability of a flight delay based on the selected parameters. An interpretation of the prediction is given, offering practical advice to users based on the calculated probability. This interpretation assists users in understanding the significance of the predicted delay probability. Also in this tab, there is a visualization to see the probability of delay three days earlier and three days later. These days are relative to the day the user selected, and the probabilities for each day are again calculated using the predict_delay function. The following provides an overview of the 'Probabilities and Interpretation' tab.
+
+``` {r,out.width= '100%', fig.align='center', fig.cap = 'Overview of the Probabilities and Interpretation tab', echo=FALSE}
+knitr::include_graphics('01.png')
+```
+
+The interpretations are categorized into three distinct thresholds. When the calculated probability falls below 0.2, users receive a message indicating that the likelihood of a delay is low, making it a favorable day for travel. For probabilities between 0.2 and 0.5, the app advises users that there is a moderate chance of delay and suggests checking for updates closer to the departure time. Finally, when the probability exceeds 0.5, users are alerted to a high likelihood of delay and are advised to plan their travel accordingly. 
+
+In Delay by Airlines tab, it provides a visual representation of the probability of delay for different airline carriers, allowing users to compare the performance of airlines in terms of on time departures. A bar chart displays the probabilities, making it easy for users to identify which airlines have higher or lower chances of experiencing delays. The following provides an overview of the 'Delay by Airlines' tab.
+
+``` {r,out.width= '100%', fig.align='center', fig.cap = 'Overview of the Delay by Airlines tab', echo=FALSE}
+knitr::include_graphics('02.png')
+```
+
+In summary, the app offers a highly intuitive and interactive interface. Users can effortlessly tailor their flight details through the use of drop down menus and sliders. This shiny app is a valuable tool for both travelers and industry experts. It offers transparency by providing insights into flight delay probabilities, empowers users to make informed decisions, and facilitates comparisons among airline carriers. 
+
+Furthermore, it's important to note a limitation of our prediction model. The model was developed using a dataset comprising flights exclusively from April to September (months 4 to 9). When users select months outside of this range, which correspond to months other than 4 to 9 in the calendar, the prediction model may encounter limitations in its performance. In such cases, the accuracy of the predictions may be compromised due to the model's reliance on a more limited dataset, and this warning is given to the user with the interpretation. We advise users to exercise caution and take this limitation into account when interpreting predictions for travel plans scheduled in months beyond the April to September time frame.
+
+# Project Summary
+
+Throughout the entire project this semester, we gained valuable insights into flight delay trends out of TPA airport through a thorough logistic regression analysis. We also gained insights into the factors that contribute to high versus low predictive accuracy in logistic regression models in general through multiple simulation studies.
+
+Through our initial logistic regression model for flight delays which included only main effects for month, day, departure time, duration, and carrier, we found that later departure time; longer duration; day on Thursday, Friday, or Saturday; carrier JetBlue; and month of April are all associated with the highest chance of delay. Most of these findings make intutive sense and thus were not extremely surprising. One piece that is surprising is that JetBlue Airways turned up as the carrier with highest chance of delay. JetBlue is generally considered a reliable airline compared to some of the others, so this finding is a bit surprising. 
+
+After the basic main-effects analysis, we compared several models by adding interaction and higher order terms and then using variable selection methods including stepwise and lasso to reduce the large number of predictors to a useful subset. The model that we found to ultimately be the most useful was a lasso model including main effects for day of the week, carrier, scheduled departure time, flight duration, and month of the year; pairwise interaction terms between between day, departure time, duration, and month; as well as second and third degree polynomial terms for departure time and duration (model 2 from assignment 5). One surprising finding on this model is that out of 81 predictors included in the full model, none of the coefficients were shrunk all the way to zero by the lasso regularization procedure. Although this model is more difficult to directly interpret since it has so many complex regressors, it is interesting that all of the regressors were useful enough to the model to have non-zero coefficients.
+
+In the first part of the simulation study, we aimed to use simulation to find a model with an AUC as close to 1 as possible and a separate model with AUC as close to 0.5 as possible. We found that a simple model with large true coefficients, low correlation between predictors, low variance of the distributions from which the predictors were drawn yielded very high AUC. On the other side of it, a complex model with many interactions and higher order terms, smaller true coefficients, higher variances for predictors, and large correlations between predictors yielded very low AUC. At first glance, this seems mostly intuitive and unsurprising, but a surprising aspect of this assignment was the vast variation in the approaches used by each group while all achieving very similar target AUC values. There was one group in particular which took almost an opposite approach to us (specifically one thing they did was using very large variances rather than small ones for high AUC) and still got very similar AUC values. This indicates that there is no one straightforward way that is the best to yield a model with a particular AUC, and many different approaches are valid.
+
+In the second part of the simulation study, we aimed to use variable selection techniques to predict the terms included in the underlying true model of simulated data provided by the instructor. Our predictive accuracy was relatively close to what we were aiming for, yet the terms included in the model were quite different from those in the true model, especially for the low AUC model. One surprising finding from this piece was the large variation in which predictors were selected into the high AUC model when running lasso with different seeds. Given that the underlying true model was able to capture the relationship between the predictors and response almost perfectly, it seems that a variable selection method on the resulting data would be able to identify the terms in the model at least somewhat reliably. We found that when running lasso 100 times with different seeds, there were several core regressors which were selected every time, but there were several others which were included in some but not all models in a seemingly random pattern with respect to how many times each was included. This was very interesting to notice how the results of the lasso can be so different just based on a different random seed being used.
+
+# Appendix A.1
+
+```{r}
+rm(list=ls())
+library("Amelia")
+library("ellipse")
+library("plyr")
+library("corrgram")
+library("Hmisc")
+library("caret")
+library("caret")
+library("caret")
+library("pscl")
+library("glmnet")
+library("car")
+library("rms")
+library("DAAG")
+library("pROC")
+
+set.seed(134562)
+
+flight.data.types <- c('factor', # Month
+                      'factor', # Day of Week
+                      'factor', # Carrier
+                      'factor', # origin airport
+                      'factor', # origin state
+                      'factor', # destination airport
+                      'factor', # destination state
+                      'numeric', # Departure Time
+                      'numeric', # on time or not
+                      'numeric', # elapsed time (duration)
+                      'numeric' # distance
+)
+missing.values <- c("NA","")
+
+flight.data <- read.csv("TampaFlights2022.csv",
+colClasses=flight.data.types,na.strings=missing.values)
+
+flight.data.new <- flight.data
+
+rand.shuffle <- sample(nrow(flight.data.new))
+flight.data.new2.new <- flight.data.new[rand.shuffle,]
+flight.data.fin <- flight.data.new2.new
+
+train.percent <- 0.8
+training.rows <- createDataPartition(flight.data.fin$delay,
+p = train.percent, list = FALSE)
+train.batch <- flight.data.fin[training.rows, ]
+test.batch <- flight.data.fin[-training.rows, ]
+
+# model
+model <- model.matrix(delay ~ (day + depart + duration + month)^2 
+                      + carrier + poly(depart, degree=3,raw=TRUE)[,2:3]
+                      + poly(duration,degree=3,raw=TRUE)[,2:3],data=train.batch)[,-1]
+
+
+glmmod <- glmnet(model,y=as.factor(train.batch$delay),alpha=1,family='binomial')
+
+cv.glmmod <- cv.glmnet(model,y=train.batch$delay,alpha=1)
+plot(cv.glmmod)
+
+best_lambda <- cv.glmmod$lambda.min
+
+model.results <- coef(glmmod,s=best_lambda)
+
+model.results
+
+model.testdata <- model.matrix(delay ~ (day + depart + duration + month)^2 
+                               + carrier + poly(depart, degree=3,raw=TRUE)[,2:3]
+                               + poly(duration,degree=3,raw=TRUE)[,2:3],data=test.batch)[,-1]
+
+
+glm.predict.lasso <- as.vector(predict(glmmod, s=best_lambda,model.testdata,type="response"))
+
+glm.predict.lasso.outcome <- factor(as.numeric(glm.predict.lasso > 0.5))
+
+confusion.outcome.lasso <- confusionMatrix(glm.predict.lasso.outcome,factor(test.batch$delay))
+
+print(confusion.outcome.lasso)
+
+model_columns <- colnames(model)
+
+save(glmmod, file="lasso_model.Rdata")
+save(model_columns, file="model_columns.Rdata")
+```
+
+# Appendix A.2
+
+```{r}
+rm(list=ls())
+
+# set random seed
+set.seed(134562)
+
+# main function
+# inputs: month, day, carrier, depart, duration
+# output: probability of delay
+predict.delay <- function(month, day, carrier, depart, duration){
+  
+  # best lambda returned by the trained model
+  best_lambda<-1.341975e-05
+  
+  # load the model columns and the model saved previously
+  load("lasso_model.RData") 
+  load("model_columns.RData") 
+  
+  # make a dataframe with the columns from model_columns  
+  df <- data.frame(matrix(ncol = 80, nrow = 0))
+  colnames(df) <- model_columns
+  
+  # make the main effect variables
+  day2 <- 1*(day==2)
+  day3 <- 1*(day==3)
+  day4 <- 1*(day==4)
+  day5 <- 1*(day==5)
+  day6 <- 1*(day==6)
+  day7 <- 1*(day==7)
+  month5 <- 1*(month==5)
+  month6 <- 1*(month==6)
+  month7 <- 1*(month==7)
+  month8 <- 1*(month==8)
+  month9 <- 1*(month==9)
+  carrierAS <- 1*(carrier=="AS")
+  carrierB6 <- 1*(carrier=="B6")
+  carrierDL <- 1*(carrier=="DL")
+  carrierF9 <- 1*(carrier=="F9")
+  carrierMQ <- 1*(carrier=="MQ")
+  carrierNK <- 1*(carrier=="NK")
+  carrierUA <- 1*(carrier=="UA")
+  carrierWN <- 1*(carrier=="WN")
+  carrierYV <- 1*(carrier=="YV")
+  carrierYX <- 1*(carrier=="YX")
+  polydepart2 <- depart^2
+  polydepart3 <- depart^3
+  polyduration2 <- duration^2
+  polyduration3 <- duration^3
+  
+  
+  # make the full interaction and polynomial row 
+  df[1,]<-c(day2, day3, day4, day5, day6, day7, depart, duration, month5, month6, month7, month8,
+            month9, carrierAS, carrierB6, carrierDL, carrierF9, carrierMQ, carrierNK, carrierUA,
+            carrierWN, carrierYV, carrierYX, polydepart2, polydepart3, polyduration2, polyduration3,
+            day2*depart, day3*depart, day4*depart, day5*depart, day6*depart, day7*depart, 
+            day2*duration, day3*duration, day4*duration, day5*duration, day6*duration, day7*duration, 
+            day2*month5, day3*month5, day4*month5, day5*month5, day6*month5, day7*month5, 
+            day2*month6, day3*month6, day4*month6, day5*month6, day6*month6, day7*month6,
+            day2*month7, day3*month7, day4*month7, day5*month7, day6*month7, day7*month7, 
+            day2*month8, day3*month8, day4*month8, day5*month8, day6*month8, day7*month8,
+            day2*month9, day3*month9, day4*month9, day5*month9, day6*month9, day7*month9,
+            depart*duration, depart*month5, depart*month6, depart*month7, depart*month8, depart*month9,
+            duration*month5, duration*month6, duration*month7, duration*month8, duration*month9) 
+  
+  # predict the probability
+  prob <- as.vector(predict(glmmod, s=best_lambda, as.matrix(df[1,]),type="response"))
+  
+  # return the probability
+  return(prob)
+}
+
+#Example call
+# input: month, day, caarrier, depart, duration
+predict.delay(7, 4, "AA", 722, 98)
+
+```
+
+# R Code Appendix: Revised Function
+
+Note that this function relies on data object included in the package, so it will not work using only the code below. This code is meant only to showcase the revisions to the function.
+
+```{r, eval = FALSE}
+predict_delay <- function(month, week_day, carrier, hour, minute, duration){
+
+  if(!(month %in% 1:12)){
+    stop(
+      "Invalid month argument. Please specify the month using an integer between 1-12.
+      For example, the month January would be represented by 1.")
+  }
+
+  if(!(week_day %in% c("Monday", "Tuesday", "Wednesday", "Thursday",
+                  "Friday", "Saturday", "Sunday")
+       )
+  ){
+    stop(
+      "Incorrect format for the week_day argument. 
+      Please specify the day of week using a character string of the entire
+      word for the weekday. For example, 'Monday'.")
+  }
+
+  if(!(carrier %in% unique(TPAdelays::tpa_data_2022$carrier))) {
+    stop("Invalid carrier argument. Please specify the carrier using a 
+    character string of the IATA code for the carrier.
+         For your reference, here are the possible options for carrier:
+         'AA' = American Airlines
+         'AS' = Alaska Airlines
+         'B6' = Jetblue Airways Corporation
+         'DL' = Delta Air Lines,
+         'F9' = Frontier Airlines
+         'MQ' = Envoy Air
+         'NK' = Spirit Airlines
+         'UA' = United Airlines
+         'WN' = Southwest Airlines
+         'YX' = Republic Airlines
+         'YV' = Mesa Airlines"
+         )
+  }
+
+  if(!(hour %in% 0:23)){
+    stop(
+      "Invalid hour argument. Please specify the scheduled hour of the departure time
+      using an integer between 0-23 (number of hours after 12am).
+      For example, the hour 13 (or 1pm) would be represented by 13.")
+  }
+
+  if(!(minute %in% 0:59)){
+    stop(
+      "Invalid minute argument. Please specify the scheduled minute of the departure time
+      using an integer between 0-59 (number of minutes after the hour).
+      For example, a departure time of 13:25 (or 1:25pm) would be represented 
+      by hour = 13, minute = 25.")
+  }
+
+  if(!(month %in% 4:9)){
+    warning(
+      "The prediction model was trained on a limited data set including flights 
+      from April-September (months 4-9). Your month input is outside of these months, 
+      so the prediction may be less accurate.")
+  }
+
+  day <- dplyr::case_when(
+    week_day == "Monday" ~ 1,
+    week_day == "Tuesday" ~ 2,
+    week_day == "Wednesday" ~ 3,
+    week_day == "Thursday" ~ 4,
+    week_day == "Friday" ~ 5,
+    week_day == "Saturday" ~ 6,
+    week_day == "Sunday" ~ 7
+  )
+
+  depart <- hour*60 + minute
+
+  best_lambda<-1.341975e-05
+
+  df <- data.frame(matrix(ncol = 80, nrow = 0))
+  colnames(df) <- model_columns
+
+  day2 <- 1*(day==2)
+  day3 <- 1*(day==3)
+  day4 <- 1*(day==4)
+  day5 <- 1*(day==5)
+  day6 <- 1*(day==6)
+  day7 <- 1*(day==7)
+  month5 <- 1*(month==5)
+  month6 <- 1*(month==6)
+  month7 <- 1*(month==7)
+  month8 <- 1*(month==8)
+  month9 <- 1*(month==9)
+  carrierAS <- 1*(carrier=="AS")
+  carrierB6 <- 1*(carrier=="B6")
+  carrierDL <- 1*(carrier=="DL")
+  carrierF9 <- 1*(carrier=="F9")
+  carrierMQ <- 1*(carrier=="MQ")
+  carrierNK <- 1*(carrier=="NK")
+  carrierUA <- 1*(carrier=="UA")
+  carrierWN <- 1*(carrier=="WN")
+  carrierYV <- 1*(carrier=="YV")
+  carrierYX <- 1*(carrier=="YX")
+  polydepart2 <- depart^2
+  polydepart3 <- depart^3
+  polyduration2 <- duration^2
+  polyduration3 <- duration^3
+
+
+
+  df[1,]<-c(day2, day3, day4, day5, day6, day7, depart, duration, month5, month6, month7, month8,
+            month9, carrierAS, carrierB6, carrierDL, carrierF9, carrierMQ, carrierNK, carrierUA,
+            carrierWN, carrierYV, carrierYX, polydepart2, polydepart3, polyduration2, polyduration3,
+            day2*depart, day3*depart, day4*depart, day5*depart, day6*depart, day7*depart,
+            day2*duration, day3*duration, day4*duration, day5*duration, day6*duration, day7*duration,
+            day2*month5, day3*month5, day4*month5, day5*month5, day6*month5, day7*month5,
+            day2*month6, day3*month6, day4*month6, day5*month6, day6*month6, day7*month6,
+            day2*month7, day3*month7, day4*month7, day5*month7, day6*month7, day7*month7,
+            day2*month8, day3*month8, day4*month8, day5*month8, day6*month8, day7*month8,
+            day2*month9, day3*month9, day4*month9, day5*month9, day6*month9, day7*month9,
+            depart*duration, depart*month5, depart*month6, depart*month7, depart*month8, depart*month9,
+            duration*month5, duration*month6, duration*month7, duration*month8, duration*month9)
+
+  logit <- as.vector(glmnet::predict.glmnet(glmmod, s=best_lambda, as.matrix(df[1,]),type="response"))
+
+  prob <- exp(logit)/(1 + exp(logit))
+
+  return(round(prob, 3))
+}
+
+```
+
+# R Code Appendix: Shiny App
+
+```{r, eval = FALSE}
+airline_names <- data.frame(
+  CarrierCode = c('AA', 'AS', 'B6', 'DL', 'F9', 'MQ', 'NK', 'UA', 'WN', 'YX', 'YV'),
+  CarrierName = c('American Airlines', 'Alaska Airlines', 'Jetblue Airways', 
+                  'Delta Air Lines',
+                  'Frontier Airlines', 'Envoy Air', 'Spirit Airlines', 'United Airlines', 
+                  'Southwest Airlines',
+                  'Republic Airlines', 'Mesa Airlines')
+)
+
+install.packages("/Users/sandanikumanayake/Desktop/Project/Assignment 10/TPAdelays", 
+                 repos = NULL, type = "source")
+
+library(TPAdelays)
+
+predict_delay <- function(month, week_day, carrier, hour, minute, durationHour, 
+                          durationMinute){
+  
+  if(!(month %in% 1:12)){
+    stop(
+      "Invalid month argument. Please specify the month using an integer between 1-12.
+      For example, the month January would be represented by 1.")
+  }
+  
+  if(!(week_day %in% c("Monday", "Tuesday", "Wednesday", "Thursday",
+                       "Friday", "Saturday", "Sunday")
+  )
+  ){
+    stop(
+      "Incorrect format for the week_day argument. 
+      Please specify the day of week using a character string of the entire
+      word for the weekday. For example, 'Monday'.")
+  }
+  
+  if(!(carrier %in% unique(TPAdelays::tpa_data_2022$carrier))) {
+    stop("Invalid carrier argument. Please specify the carrier using a 
+    character string of the IATA code for the carrier.
+         For your reference, here are the possible options for carrier:
+         'AA' = American Airlines
+         'AS' = Alaska Airlines
+         'B6' = Jetblue Airways Corporation
+         'DL' = Delta Air Lines,
+         'F9' = Frontier Airlines
+         'MQ' = Envoy Air
+         'NK' = Spirit Airlines
+         'UA' = United Airlines
+         'WN' = Southwest Airlines
+         'YX' = Republic Airlines
+         'YV' = Mesa Airlines"
+    )
+  }
+  
+  if(!(hour %in% 0:23)){
+    stop(
+      "Invalid hour argument. Please specify the scheduled hour of the departure time
+      using an integer between 0-23 (number of hours after 12am).
+      For example, the hour 13 (or 1pm) would be represented by 13.")
+  }
+  
+  if(!(minute %in% 0:59)){
+    stop(
+      "Invalid minute argument. Please specify the scheduled minute of the departure time
+      using an integer between 0-59 (number of minutes after the hour).
+      For example, a departure time of 13:25 (or 1:25pm) would be represented 
+      by hour = 13, minute = 25.")
+  }
+  
+  if(!(month %in% 4:9)){
+    warning(
+      "The prediction model was trained on a limited data set including flights 
+      from April-September (months 4-9). Your month input is outside of these months, 
+      so the prediction may be less accurate.")
+  }
+  
+  day <- dplyr::case_when(
+    week_day == "Monday" ~ 1,
+    week_day == "Tuesday" ~ 2,
+    week_day == "Wednesday" ~ 3,
+    week_day == "Thursday" ~ 4,
+    week_day == "Friday" ~ 5,
+    week_day == "Saturday" ~ 6,
+    week_day == "Sunday" ~ 7
+  )
+  
+  depart <- hour*60 + minute
+  
+  duration <- durationHour * 60 + durationMinute
+  
+  best_lambda<-1.341975e-05
+  
+  df <- data.frame(matrix(ncol = 80, nrow = 0))
+  colnames(df) <- model_columns
+  
+  day2 <- 1*(day==2)
+  day3 <- 1*(day==3)
+  day4 <- 1*(day==4)
+  day5 <- 1*(day==5)
+  day6 <- 1*(day==6)
+  day7 <- 1*(day==7)
+  month5 <- 1*(month==5)
+  month6 <- 1*(month==6)
+  month7 <- 1*(month==7)
+  month8 <- 1*(month==8)
+  month9 <- 1*(month==9)
+  carrierAS <- 1*(carrier=="AS")
+  carrierB6 <- 1*(carrier=="B6")
+  carrierDL <- 1*(carrier=="DL")
+  carrierF9 <- 1*(carrier=="F9")
+  carrierMQ <- 1*(carrier=="MQ")
+  carrierNK <- 1*(carrier=="NK")
+  carrierUA <- 1*(carrier=="UA")
+  carrierWN <- 1*(carrier=="WN")
+  carrierYV <- 1*(carrier=="YV")
+  carrierYX <- 1*(carrier=="YX")
+  polydepart2 <- depart^2
+  polydepart3 <- depart^3
+  polyduration2 <- duration^2
+  polyduration3 <- duration^3
+  
+  
+  
+  df[1,]<-c(day2, day3, day4, day5, day6, day7, depart, duration, month5, month6, month7, 
+            month8,month9, carrierAS, carrierB6, carrierDL, carrierF9, carrierMQ, carrierNK, 
+            carrierUA, carrierWN, carrierYV, carrierYX, polydepart2, polydepart3, polyduration2, 
+            polyduration3, day2*depart, day3*depart, day4*depart, day5*depart, day6*depart, 
+            day7*depart,day2*duration, day3*duration, day4*duration, day5*duration, day6*duration, 
+            day7*duration, day2*month5, day3*month5, day4*month5, day5*month5, day6*month5, 
+            day7*month5, day2*month6, day3*month6, day4*month6, day5*month6, day6*month6, 
+            day7*month6, day2*month7, day3*month7, day4*month7, day5*month7, day6*month7, 
+            day7*month7, day2*month8, day3*month8, day4*month8, day5*month8, day6*month8, 
+            day7*month8, day2*month9, day3*month9, day4*month9, day5*month9, day6*month9, day7*month9,
+            depart*duration, depart*month5, depart*month6, depart*month7, depart*month8, depart*month9,
+            duration*month5, duration*month6, duration*month7, duration*month8, duration*month9)
+  
+  logit <- as.vector(glmnet::predict.glmnet(glmmod, s=best_lambda, as.matrix(df[1,]),type="response"))
+  
+  prob <- exp(logit)/(1 + exp(logit))
+  
+  return(round(prob, 3))
+}
+
+
+library(shiny)
+library(ggplot2)
+library(glmnet)
+
+ui <- fluidPage(
+  titlePanel("TPA Flight Delay Prediction"),
+  
+  # Create tabs 
+  tabsetPanel(
+    tabPanel("Probability and Interpretation",
+             sidebarLayout(
+               sidebarPanel(
+                 selectInput("month", "Month of Flight:", 
+                             choices = c("January" = 1, "February" = 2, "March" = 3, 
+                                         "April" = 4, "May" = 5, "June" = 6, 
+                                         "July" = 7, "August" = 8, "September" = 9, 
+                                         "October" = 10, "November" = 11, 
+                                         "December" = 12)),
+                 selectInput("day", "Day of Week:", 
+                             choices = c("Monday", "Tuesday", "Wednesday", "Thursday", 
+                                         "Friday", "Saturday", "Sunday")),
+                 selectInput("carrier", "Airline Carrier:", 
+                             choices = airline_names$CarrierName),
+                 
+                 # Departure Time
+                 h4("Departure Time:"),
+                 sliderInput("hour", "Hour:", min = 0, max = 23, value = 12),
+                 sliderInput("minute", "Minute:", min = 0, max = 59, value = 0),
+                 
+                 # Flight Duration
+                 h4("Flight Duration:"),
+                 sliderInput("durationHour", "Hour:", min = 0, max = 7, value = 1),
+                 sliderInput("durationMinute", "Minute:", min = 0, max = 59, value = 0)
+               ),
+               mainPanel(
+                 verbatimTextOutput("prediction"),
+                 textOutput("interpretation"),
+                 plotOutput("plotDelayDays")
+               )
+             )
+    ),
+    tabPanel("Delay by Airlines",
+             plotOutput("plotDelayAirlines")
+    )
+  )
+)
+
+
+server <- function(input, output) {
+  prediction <- reactive({
+    predict_delay(as.integer(input$month), input$day, 
+                  airline_names$CarrierCode[airline_names$CarrierName == input$carrier], 
+                  input$hour, input$minute, input$durationHour, input$durationMinute)
+  })
+  
+  output$prediction <- renderText({
+    paste("Probability of Delay: ", prediction() * 100, "%")
+  })
+  
+  output$interpretation <- renderText({
+    prob <- prediction()
+    interpretation <- ""
+    warning_message <- ""
+    
+    month_index <- as.integer(input$month)
+    month_names <- c("January", "February", "March", "April", "May", "June",
+                     "July", "August", "September", "October", "November", "December")
+    
+    selected_month <- ifelse(month_index >= 1 && month_index <= 12, month_names[month_index], 
+                             "an unknown month")
+    
+    if ((month_index >= 1 && month_index <= 3) || (month_index >= 10 && month_index <= 12)) {
+      warning_message <- "Warning in predict_delay: The prediction model was trained on a 
+      limited data set including flights from April-September. Your month input is outside 
+      of these months, so the prediction may be less accurate."
+    }
+    
+    if(prob < 0.2) {
+      interpretation <- "The likelihood of a delay is low. It's a good day for travel."
+    } else if(prob >= 0.2 && prob < 0.5) {
+      interpretation <- "There is a moderate chance of delay. Consider checking for updates 
+      closer to your departure time."
+    } else {
+      interpretation <- "There is a high likelihood of delay. It's advisable to plan accordingly."
+    }
+    
+    paste("Based on the selected month (", selected_month, "), day (", input$day, "), 
+          carrier (", input$carrier, 
+          "), departure time (", input$hour, ":", sprintf("%02d", input$minute), 
+          "), and flight duration (", input$durationHour, "hr", input$durationMinute, "min), ", 
+          interpretation, warning_message)
+    
+  })
+  
+  output$plotDelayDays <- renderPlot({
+    selected_month <- as.integer(input$month)
+    selected_day <- input$day
+    selected_hour <- input$hour
+    selected_minute <- input$minute
+    durationHour <- input$durationHour
+    durationMinute <- input$durationMinute
+    selected_carrier <- airline_names$CarrierCode[airline_names$CarrierName == input$carrier]
+    
+    adjust_day <- function(day, adjustment) {
+      days <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+      index <- match(day, days)
+      new_index <- (index + adjustment - 1) %% 7 + 1
+      return(days[new_index])
+    }
+    
+    # Calculate probabilities for each day
+    days_range <- -3:3
+    probabilities <- sapply(days_range, function(day_adjustment) {
+      adjusted_day <- adjust_day(selected_day, day_adjustment)
+      predict_delay(selected_month, adjusted_day, selected_carrier, selected_hour, selected_minute, 
+                    durationHour, durationMinute)
+    })
+  
+    data <- data.frame(Day = days_range, Probability = probabilities)
+    
+    # Plot 01
+    ggplot(data, aes(x = Day, y = Probability)) +
+      geom_line(size = 1, color = "#00BFC4") +  # Custom line color
+      geom_point(size = 3, color = "#F8766D") +  # Custom point color
+      scale_x_continuous(breaks = days_range, labels = c("3 days earlier", "2 days earlier", 
+                                                         "1 day earlier", "Selected day", 
+                                                         "1 day later", 
+                                                         "2 days later", "3 days later")) +
+      labs(x = "Days Relative to Selected Day", y = "Probability of Delay", 
+           title = "Probability of Flight Delay Over a Week") +
+      theme_minimal() +
+      theme(plot.title = element_text(size = 20, hjust = 0.5),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14))  # Centering the title
+  })
+  
+  output$plotDelayAirlines <- renderPlot({
+    selected_month <- as.integer(input$month)
+    selected_day <- input$day
+    selected_hour <- input$hour
+    selected_minute <- input$minute
+    durationHour <- input$durationHour
+    durationMinute <- input$durationMinute
+    selected_carrier <- airline_names$CarrierCode[airline_names$CarrierName == input$carrier]
+    
+    airlines <- airline_names$CarrierCode
+    
+    # Calculate probabilities for each airline
+    probabilities <- sapply(airlines, function(airline) {
+      predict_delay(selected_month, selected_day, airline, selected_hour, selected_minute, 
+                    durationHour, durationMinute)
+    })
+    
+    data <- data.frame(Airline = airline_names$CarrierName, Probability = probabilities)
+    
+    # Plot 02
+    ggplot(data, aes(x = Airline, y = Probability, fill = Airline)) +
+      geom_bar(stat = "identity") +
+      labs(title = "Probability of Delay by Airlines",
+           x = "Airline",
+           y = "Probability of Delay") +
+      theme_minimal() +
+      theme(plot.title = element_text(size = 20, hjust = 0.5),
+            axis.title = element_text(size = 16),
+            axis.text = element_text(size = 14),
+            legend.position = "none")
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+```
